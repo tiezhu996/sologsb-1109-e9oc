@@ -70,7 +70,9 @@ npm run build    # 类型检查 + 生产构建
 
 ## 数据存储说明
 
-- 全部数据存于浏览器 IndexedDB（Dexie，库名 `gbherbprocess-db`），表：`herbs`、`methods`、`batches`、`samples`、`meta`。
-- `db.version(1)` 建表声明索引；`db.version(2).upgrade(...)` 为 `batches` 增加 `locked` 索引并回填历史数据。升级前可用顶栏「导出备份」导出全量 JSON。
+- 全部数据存于浏览器 IndexedDB（Dexie，库名 `gbherbprocess-db`），表：`herbs`、`methods`、`batches`、`samples`、`importSessions`、`meta`。
+- 顶栏「班组备份合入」先将备份放入 `importSessions` 待接收区，不改变正式台账。身份按业务字段识别：药材=名称+药材批号，方法=方法+辅料+配比，工序=生产批号+药材身份+方法身份，留样=留样号+工序身份。
+- 同名药材或同身份方法/工序存在差异时进入冲突页，质检员选择质检机或班组记录为主；本机留样始终为主，班组留样只能追加观察记录。提交在单个事务内写入，失败会回滚正式台账并保留接收区。
+- `db.version(1)` 建表声明索引；`db.version(2).upgrade(...)` 为 `batches` 增加 `locked` 索引并回填历史数据；`db.version(3)` 增加 `importSessions` 待接收区。升级前可用顶栏「导出备份」导出全量 JSON。
 - 首次打开且表为空时写入一批示例台账（`src/utils/seed.ts`），便于直接查看各页面效果。
 - 容器无状态：不使用数据库服务、不挂载命名卷，`docker compose down` 后数据仍留在浏览器中。

@@ -3,18 +3,20 @@ import type { HerbMaterial } from '../types/herb-material';
 import type { ProcessingMethod } from '../types/processing-method';
 import type { ProcessBatch } from '../types/process-batch';
 import type { RetainSample } from '../types/retain-sample';
+import type { ImportSession } from '../types/import';
 
 /** IndexedDB 库名（浏览器本地存储，无后端） */
 export const DB_NAME = 'gbherbprocess-db';
 
 /** 当前 schema 版本，与 db.version(n) 对应 */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 class HerbProcessDB extends Dexie {
   herbs!: Table<HerbMaterial, string>;
   methods!: Table<ProcessingMethod, string>;
   batches!: Table<ProcessBatch, string>;
   samples!: Table<RetainSample, string>;
+  importSessions!: Table<ImportSession, string>;
   meta!: Table<{ key: string; value: string }, string>;
 
   constructor() {
@@ -49,6 +51,16 @@ class HerbProcessDB extends Dexie {
             }
           });
       });
+
+    // v3：班组备份合入的待接收区独立存放；提交是单事务，失败时正式台账不变。
+    this.version(3).stores({
+      herbs: 'id, name, origin, part, batchNo, receivedAt',
+      methods: 'id, name, auxiliary, fireLevel',
+      batches: 'id, batchNo, herbId, methodId, degree, startedAt, locked',
+      samples: 'id, sampleNo, batchId, cabinet, retainedAt',
+      importSessions: 'id,status,createdAt',
+      meta: 'key',
+    });
   }
 }
 

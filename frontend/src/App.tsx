@@ -14,7 +14,9 @@ import { useHerbStore } from './stores/herbStore';
 import { useMethodStore } from './stores/methodStore';
 import { useBatchStore } from './stores/batchStore';
 import { useSampleStore } from './stores/sampleStore';
+import { useImportStore } from './stores/importStore';
 import { downloadText, exportBackupJson } from './utils/export';
+import ImportCenter from './components/common/ImportCenter';
 
 const { Header, Sider, Content, Footer } = Layout;
 const { Title, Text } = Typography;
@@ -35,6 +37,7 @@ export default function App() {
   const hydrateMethods = useMethodStore((s) => s.hydrate);
   const hydrateBatches = useBatchStore((s) => s.hydrate);
   const hydrateSamples = useSampleStore((s) => s.hydrate);
+  const hydrateImport = useImportStore((s) => s.hydrate);
   const location = useLocation();
 
   useEffect(() => {
@@ -42,7 +45,7 @@ export default function App() {
     (async () => {
       try {
         await seedIfEmpty();
-        await Promise.all([hydrateHerbs(), hydrateMethods(), hydrateBatches(), hydrateSamples()]);
+        await Promise.all([hydrateHerbs(), hydrateMethods(), hydrateBatches(), hydrateSamples(), hydrateImport()]);
       } catch (error) {
         message.error(`本地数据装载失败：${(error as Error).message}`);
       } finally {
@@ -54,7 +57,7 @@ export default function App() {
     return () => {
       alive = false;
     };
-  }, [hydrateHerbs, hydrateMethods, hydrateBatches, hydrateSamples, message]);
+  }, [hydrateHerbs, hydrateMethods, hydrateBatches, hydrateSamples, hydrateImport, message]);
 
   const selectedKey = MENU_ITEMS.map((item) => item.key)
     .filter((key) => (key === '/' ? location.pathname === '/' : location.pathname.startsWith(key)))
@@ -81,6 +84,7 @@ export default function App() {
         <Header style={{ background: '#fff', padding: '0 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <Text strong>中草药炮制工序记录台</Text>
           <Space>
+            <ImportCenter />
             <Button icon={<DownloadOutlined />} onClick={handleExport}>
               导出备份
             </Button>
