@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Layout, Menu, Spin, Typography, App as AntApp, Button, Space } from 'antd';
+import { useEffect, useRef, useState } from 'react';
+import { Layout, Menu, Spin, Typography, App as AntApp, Button, Space, Badge } from 'antd';
 import {
   ExperimentOutlined,
   FireOutlined,
@@ -7,6 +7,7 @@ import {
   ProfileOutlined,
   DashboardOutlined,
   DownloadOutlined,
+  ImportOutlined,
 } from '@ant-design/icons';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { seedIfEmpty } from './utils/seed';
@@ -14,7 +15,10 @@ import { useHerbStore } from './stores/herbStore';
 import { useMethodStore } from './stores/methodStore';
 import { useBatchStore } from './stores/batchStore';
 import { useSampleStore } from './stores/sampleStore';
+import { useInboxStore } from './stores/inboxStore';
 import { downloadText, exportBackupJson } from './utils/export';
+import { countInbox } from './utils/merge';
+import ImportInboxDrawer from './components/ImportInboxDrawer';
 
 const { Header, Sider, Content, Footer } = Layout;
 const { Title, Text } = Typography;
@@ -27,14 +31,21 @@ const MENU_ITEMS = [
   { key: '/samples', icon: <InboxOutlined />, label: <Link to="/samples">留样台账</Link> },
 ];
 
-/** 应用外壳：左侧导航 + 顶部导出备份，负责一次性的本地数据装载 */
+/** 应用外壳：左侧导航 + 顶部备份导出/班组备份合入，负责一次性的本地数据装载 */
 export default function App() {
   const { message } = AntApp.useApp();
   const [ready, setReady] = useState(false);
+  const [inboxOpen, setInboxOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+
   const hydrateHerbs = useHerbStore((s) => s.hydrate);
   const hydrateMethods = useMethodStore((s) => s.hydrate);
   const hydrateBatches = useBatchStore((s) => s.hydrate);
   const hydrateSamples = useSampleStore((s) => s.hydrate);
+  const hydrateInbox = useInboxStore((s) => s.hydrate);
+  const inboxDoc = useInboxStore((s) => s.doc);
+  const importToInbox = useInboxStore((s) => s.importToInbox);
   const location = useLocation();
 
   useEffect(() => {
@@ -42,7 +53,7 @@ export default function App() {
     (async () => {
       try {
         await seedIfEmpty();
-        await Promise.all([hydrateHerbs(), hydrateMethods(), hydrateBatches(), hydrateSamples()]);
+        await Promise.all([hydrateHerbs(), hydrateMethods(), hydrateBatches(), hydrateSamples(), hydrateInbox()]);
       } catch (error) {
         message.error(`本地数据装载失败：${(error as Error).message}`);
       } finally {
@@ -54,7 +65,7 @@ export default function App() {
     return () => {
       alive = false;
     };
-  }, [hydrateHerbs, hydrateMethods, hydrateBatches, hydrateSamples, message]);
+  }, [hydrateHerbs, hydrateMethods, hydrateBatches, hydrateSamples, hydrateInbox, message]);
 
   const selectedKey = MENU_ITEMS.map((item) => item.key)
     .filter((key) => (key === '/' ? location.pathname === '/' : location.pathname.startsWith(key)))
@@ -65,6 +76,36 @@ export default function App() {
     downloadText(`gbherbprocess-backup-${new Date().toISOString().slice(0, 10)}.json`, json);
     message.success('已导出 IndexedDB 全量 JSON 备份');
   };
+
+  const pickFile = () => fileRef.current?.click();
+
+  const handleFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) {
+      return;
+    }
+    setImporting(true);
+    try {
+      const text = await file.text();
+      // 只进待接收区；解析/校验失败时抛错，既有接收区与正式台账都不变。
+      const counters = await importToInbox(text);
+      message.success(
+        `班组备份已读入待接收区：补入 ${counters.add} 条、冲突 ${counters.conflict} 处待确认、留样追加 ${counters.merge} 类`,
+      );
+      setInboxOpen(true);
+    } catch (error) {
+      message.error(`导入失败：${(error as Error).message}；接收区与本机台账保持原样`);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const handleCommitted = async () => {
+    await Promise.all([hydrateHerbs(), hydrateMethods(), hydrateBatches(), hydrateSamples()]);
+  };
+
+  const inboxBadge = inboxDoc ? countInbox(inboxDoc).add + countInbox(inboxDoc).conflict + countInbox(inboxDoc).merge : 0;
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
@@ -79,8 +120,17 @@ export default function App() {
       </Sider>
       <Layout>
         <Header style={{ background: '#fff', padding: '0 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Text strong>中草药炮制工序记录台</Text>
+          <Text strong>中草药炮制工序记录台（质检机）</Text>
           <Space>
+            <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={handleFile} />
+            <Button icon={<ImportOutlined />} loading={importing} onClick={pickFile}>
+              导入班组备份
+            </Button>
+            <Badge count={inboxBadge} size="small" offset={[-6, 4]}>
+              <Button icon={<InboxOutlined />} onClick={() => setInboxOpen(true)}>
+                待接收区
+              </Button>
+            </Badge>
             <Button icon={<DownloadOutlined />} onClick={handleExport}>
               导出备份
             </Button>
@@ -99,6 +149,7 @@ export default function App() {
           数据保存在浏览器 IndexedDB（gbherbprocess-db），不依赖后端服务
         </Footer>
       </Layout>
+      <ImportInboxDrawer open={inboxOpen} onClose={() => setInboxOpen(false)} onCommitted={handleCommitted} />
     </Layout>
   );
 }

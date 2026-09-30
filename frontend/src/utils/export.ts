@@ -1,27 +1,62 @@
-import { db, SCHEMA_VERSION } from './db';
+import { db, getMeta, setMeta, SCHEMA_VERSION } from './db';
 
 export interface BackupPayload {
   app: string;
   schemaVersion: number;
   exportedAt: string;
+  /** 导出机器标识（两台机器合入时用于区分数据主人） */
+  machineId: string;
+  /** 机器名称（可在本机设置，仅作展示） */
+  machineName?: string;
   herbs: unknown[];
   methods: unknown[];
   batches: unknown[];
   samples: unknown[];
 }
 
+const MACHINE_ID_KEY = 'machineId';
+const MACHINE_NAME_KEY = 'machineName';
+
+/** 本机机器标识：首次访问时生成并持久化，之后保持稳定 */
+export async function getMachineId(): Promise<string> {
+  const existed = await getMeta(MACHINE_ID_KEY);
+  if (existed) {
+    return existed;
+  }
+  const id = `machine-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  await setMeta(MACHINE_ID_KEY, id);
+  return id;
+}
+
+export async function getMachineName(): Promise<string | undefined> {
+  return getMeta(MACHINE_NAME_KEY);
+}
+
+export async function setMachineName(name: string): Promise<void> {
+  const trimmed = name.trim();
+  if (trimmed) {
+    await setMeta(MACHINE_NAME_KEY, trimmed);
+  } else {
+    await db.meta.delete(MACHINE_NAME_KEY);
+  }
+}
+
 /** 汇总全部本地表为 JSON 备份（schema 迁移前先导出） */
 export async function buildBackup(): Promise<BackupPayload> {
-  const [herbs, methods, batches, samples] = await Promise.all([
+  const [herbs, methods, batches, samples, machineId, machineName] = await Promise.all([
     db.herbs.toArray(),
     db.methods.toArray(),
     db.batches.toArray(),
     db.samples.toArray(),
+    getMachineId(),
+    getMachineName(),
   ]);
   return {
     app: 'gbherbprocess',
     schemaVersion: SCHEMA_VERSION,
     exportedAt: new Date().toISOString(),
+    machineId,
+    machineName,
     herbs,
     methods,
     batches,
@@ -51,32 +86,5 @@ export function downloadCsv<T extends Record<string, unknown>>(filename: string,
   const body = rows
     .map((row) => columns.map((c) => `"${String(row[c.key] ?? '').replace(/"/g, '""')}"`).join(','))
     .join('\n');
-  downloadText(filename, `\ufeff${header}\n${body}`, 'text/csv');
-}
-
-/** 恢复 JSON 备份 */
-export async function importBackup(text: string): Promise<{ herbs: number; methods: number; batches: number; samples: number }> {
-  const payload = JSON.parse(text) as Partial<BackupPayload>;
-  if (!payload || payload.app !== 'gbherbprocess') {
-    throw new Error('备份文件格式不匹配（缺少 app=gbherbprocess 标记）');
-  }
-  const counts = {
-    herbs: payload.herbs?.length ?? 0,
-    methods: payload.methods?.length ?? 0,
-    batches: payload.batches?.length ?? 0,
-    samples: payload.samples?.length ?? 0,
-  };
-  await db.transaction('rw', db.herbs, db.methods, db.batches, db.samples, async () => {
-    await Promise.all([
-      db.herbs.clear(),
-      db.methods.clear(),
-      db.batches.clear(),
-      db.samples.clear(),
-    ]);
-    if (payload.herbs?.length) await db.herbs.bulkPut(payload.herbs as never[]);
-    if (payload.methods?.length) await db.methods.bulkPut(payload.methods as never[]);
-    if (payload.batches?.length) await db.batches.bulkPut(payload.batches as never[]);
-    if (payload.samples?.length) await db.samples.bulkPut(payload.samples as never[]);
-  });
-  return counts;
+  downloadText(filename, `﻿${header}\n${body}`, 'text/csv');
 }
